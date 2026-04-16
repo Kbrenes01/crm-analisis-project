@@ -12,11 +12,9 @@ Support business decision-making through customer segmentation and data-driven i
 Excel
 R (R Markdown)
    Key Insights
-->61.7% of clients are in America, with Costa Rica leading (8 clients).
-
-->Client distribution is balanced across key sectors (Alimentos, Comercio, Agroindustria, Energía).
-
-->Average purchase frequency: ~2.5 months, indicating strong potential for retention and upselling strategies.
+61.7% of clients are in America, with Costa Rica leading (8 clients).
+Client distribution is balanced across key sectors (Alimentos, Comercio, Agroindustria, Energía). 
+Average purchase frequency: ~2.5 months, indicating strong potential for retention and upselling strategies.
    Structure
 /data → Dataset
 /analysis → R Markdown & HTML report
