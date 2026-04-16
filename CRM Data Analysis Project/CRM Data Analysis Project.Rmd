@@ -1,0 +1,245 @@
+---
+title: "CRM Predictivo de Ventas en R"
+author: "Kevin Brenes Leiva"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  ioslides_presentation:
+    logo: "Logo.png"
+    widescreen: true
+    smaller: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+
+# Herramienta: CRM Predictivo de Ventas en R
+
+Esta herramienta busca **automatizar el análisis de ventas y clientes** que actualmente se realiza manualmente en hojas de Excel.  
+Por ejemplo, los reportes de ventas se elaboran de forma manual sumando datos en distintas hojas, lo que consume tiempo y puede causar errores.  
+
+Con esta aplicación en **R**, se integran automáticamente las tablas de **clientes y ventas**, se generan **KPIs** (ventas totales, promedio por cliente, clientes activos), **gráficos mensuales** y un **modelo predictivo simple** que proyecta las ventas futuras de forma rápida y confiable.
+
+
+
+# Cargamos las librerias
+
+```{r, echo=TRUE, results='hide'}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(writexl)   # Para exportar xlsx
+library(openxlsx)  # Mas control sobre formatos
+library(rmarkdown)
+
+```
+
+
+# Verificamos que el archivo se lee bien
+
+```{r, echo=TRUE, results='hide'}
+
+clientes <- read_excel("CRM_Datos.xlsx", sheet = "TblClientes")
+ventas <- read_excel("CRM_Datos.xlsx", sheet = "TblVentas")
+
+
+head(clientes)
+head(ventas)
+```
+
+
+# Usamos la función left_join() del paquete dplyr para unir ambas tablas en una sola, llamada crm.
+
+```{r, echo=TRUE, results='hide'}
+
+crm <- left_join(ventas, clientes, by = c("ID Cliente" = "ID"))
+
+head(crm)
+```
+
+```{r, echo=TRUE, results='hide'}
+
+names(clientes) <- trimws(names(clientes))
+names(ventas) <- trimws(names(ventas))
+
+```
+
+
+# Preparamos los datos
+```{r, echo=TRUE, results='hide'}
+
+
+crm <- crm %>%
+  mutate(AñoMes = floor_date(Fecha, unit = "month"))
+
+# Agregamos ventas por mes
+ventas_mensual <- crm %>%
+  group_by(AñoMes) %>%
+  summarise(Ventas = sum(`Monto Total`, na.rm = TRUE)) %>%
+  arrange(AñoMes) %>%
+  ungroup()
+
+# Resultado
+head(ventas_mensual)
+```
+
+# Funciones personalizadas (KPI y utilidades)
+
+
+En esta parte, desarrollamos funciones personalizadas para obtener indicadores de negocio.
+  Creamos una función que calcula los KPI más importantes, como las ventas totales, el número de clientes activos y la venta promedio por cliente.
+  Además, generamos una tabla con los clientes que más compran, lo que ayuda a identificar a los más importantes para la empresa.
+  Estas funciones permiten automatizar el análisis sin tener que hacerlo manualmente en Excel.
+  
+  
+```{r, echo=TRUE, results='hide'}
+# KPI: ventas totales, ventas promedio por cliente, clientes activos
+
+calc_kpis <- function(df_crm) {
+  total_ventas <- sum(df_crm$`Monto Total`, na.rm = TRUE)
+  clientes_unicos <- n_distinct(df_crm$`ID Cliente`)
+  ventas_promedio_cliente <- df_crm %>%
+    group_by(`ID Cliente`) %>%
+    summarise(total = sum(`Monto Total`, na.rm = TRUE)) %>%
+    summarise(prom = mean(total, na.rm = TRUE)) %>%
+    pull(prom)
+  list(
+    total_ventas = total_ventas,
+    clientes_unicos = clientes_unicos,
+    ventas_promedio_cliente = ventas_promedio_cliente
+  )
+}
+
+# Top N clientes por ventas
+
+top_clients <- function(df_crm, n = 10) {
+  df_crm %>%
+    group_by(`ID Cliente`) %>%
+    summarise(Cliente = first(`Nombre del Cliente`),
+              Ventas = sum(`Monto Total`, na.rm = TRUE)) %>%
+    arrange(desc(Ventas)) %>%
+    slice_head(n = n)
+}
+
+# Función para crear tabla mensual por cliente 
+ventas_mensual_por_cliente <- function(df_crm) {
+  df_crm %>%
+    group_by(`ID Cliente`, AñoMes = floor_date(Fecha, "month")) %>%
+    summarise(Ventas = sum(`Monto Total`, na.rm = TRUE)) %>%
+    ungroup()
+}
+
+kpis <- calc_kpis(crm)
+print(kpis)
+top5 <- top_clients(crm, 5)
+print(top5)
+
+
+```
+
+
+# Análisis predictivo
+
+
+  Análisis predictivo simple con lm() (modelo lineal) para encontrar relaciones entre variables y predecir valores futuros.
+
+
+  En esta parte usamos un modelo lineal simple para predecir las ventas futuras.Primero, ordenamos los meses en una secuencia numérica para que R entienda la progresión del tiempo. Luego, aplicamos la función lm() para encontrar la tendencia general de las ventas. Finalmente, generamos predicciones para los próximos tres meses, mostrando no solo la estimación, sino también un rango posible con un 95% de confianza.
+  
+```{r, echo=TRUE, results='hide'}
+# Preparar datos para lm: convertir AñoMes a índice numérico (t)
+
+ventas_mensual <- ventas_mensual %>%
+  mutate(t = seq_len(n()))  # 1,2,3,...
+
+# Ajustar modelo lineal: Ventas ~ t
+
+modelo_lm <- lm(Ventas ~ t, data = ventas_mensual)
+summary(modelo_lm)  # ver R^2, coeficientes
+
+# Predecir próximos 3 meses
+h <- 3
+ultimo_t <- max(ventas_mensual$t)
+newdata <- data.frame(t = (ultimo_t + 1):(ultimo_t + h))
+predicciones <- predict(modelo_lm, newdata = newdata, interval = "prediction", level = 0.95)
+pred_df <- data.frame(
+  AñoMes = seq(max(ventas_mensual$AñoMes) %m+% months(1), by = "month", length.out = h),
+  pred = predicciones[, "fit"],
+  lwr = predicciones[, "lwr"],
+  upr = predicciones[, "upr"]
+) # Usa el modelo para estimar las ventas futuras, incluyendo un intervalo de confianza del 95% (valores mínimo y máximo esperados).
+
+pred_df
+```
+
+
+
+# Visualizaciones
+Visualizaciones con ggplot2
+
+# Ventas mensuales
+
+```{r grafico1, echo=FALSE, fig.width=9, fig.height=5, out.width='90%'}
+ggplot(ventas_mensual, aes(x = AñoMes, y = Ventas)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Ventas mensuales", x = "Mes", y = "Ventas") +
+  theme_minimal(base_size = 14)
+```
+
+
+
+# Ventas históricas y pronóstico (lm)
+
+```{r grafico2, echo=FALSE, fig.width=9, fig.height=5, out.width='90%'}
+ggplot() +
+  geom_line(data = ventas_mensual, aes(x = AñoMes, y = Ventas), color = "blue") +
+  geom_point(data = ventas_mensual, aes(x = AñoMes, y = Ventas), color = "blue") +
+  geom_line(data = pred_df, aes(x = AñoMes, y = pred), color = "red", linetype = "dashed") +
+  geom_ribbon(data = pred_df, aes(x = AñoMes, ymin = lwr, ymax = upr), alpha = 0.2, fill = "orange") +
+  labs(title = "Ventas históricas y pronóstico (lm)", x = "Mes", y = "Ventas") +
+  theme_minimal(base_size = 14)
+```
+
+
+
+# Top 5 clientes por ventas
+
+```{r grafico3, echo=FALSE, fig.width=9, fig.height=5, out.width='90%'}
+top5 <- top_clients(crm, 5)
+
+ggplot(top5, aes(x = reorder(Cliente, Ventas), y = Ventas)) +
+  geom_col(fill = "#0073C2FF") +
+  coord_flip() +
+  labs(title = "Top 5 clientes por ventas", x = "", y = "Ventas") +
+  theme_minimal(base_size = 14)
+```
+
+
+
+```{r, echo=TRUE, results='hide'}
+output_list <- list(
+  KPIs = as.data.frame(kpis),          
+  Ventas_Mensuales = ventas_mensual %>% select(-t),
+  Top_Clientes = top_clients(crm, 20),
+  Predicciones = pred_df
+)
+
+# writexl (simple)
+writexl::write_xlsx(output_list, path = "Informe_CRM_Resultados.xlsx")
+
+# openxlsx (más control)
+wb <- createWorkbook()
+addWorksheet(wb, "KPIs"); writeData(wb, "KPIs", as.data.frame(kpis))
+addWorksheet(wb, "Ventas_Mensuales"); writeData(wb, "Ventas_Mensuales", ventas_mensual)
+addWorksheet(wb, "Top_Clientes"); writeData(wb, "Top_Clientes", top_clients(crm, 20))
+addWorksheet(wb, "Predicciones"); writeData(wb, "Predicciones", pred_df)
+saveWorkbook(wb, file = "Informe_CRM_Resultados_openxlsx.xlsx", overwrite = TRUE)
+```
+
+
+
